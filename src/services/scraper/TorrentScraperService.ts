@@ -105,30 +105,30 @@ export class TorrentScraperService {
                         .filter((r): r is TorrentResult => r !== null);
                 }).catch(() => []), []),
 
-                // RARGB (fonte extra)
-                withTimeout(Promise.all([
-                    searchRargb(qEn, type),
-                    ptDiferente ? searchRargb(qPt, type) : Promise.resolve([])
-                ]).then(([en, pt]) => {
-                    const seen = new Set<string>();
-                    return [...en, ...pt]
-                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
-                        .map(r => this.mapRargbResult(r, type))
-                        .filter((r): r is TorrentResult => r !== null);
-                }).catch(() => []), []),
+//                // RARGB (fonte extra)
+//                withTimeout(Promise.all([
+//                    searchRargb(qEn, type),
+//                    ptDiferente ? searchRargb(qPt, type) : Promise.resolve([])
+//                ]).then(([en, pt]) => {
+//                    const seen = new Set<string>();
+//                    return [...en, ...pt]
+//                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
+//                        .map(r => this.mapRargbResult(r, type))
+//                        .filter((r): r is TorrentResult => r !== null);
+//                }).catch(() => []), []),
 
                 // The Pirate Bay (fonte extra)
-                withTimeout(Promise.all([
-                    searchTpb(qEn, type),
-                    ptDiferente ? searchTpb(qPt, type) : Promise.resolve([])
-                ]).then(([en, pt]) => {
-                    const seen = new Set<string>();
-                    return [...en, ...pt]
-                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
-                        .map(r => this.mapTpbResult(r, type))
-                        .filter((r): r is TorrentResult => r !== null);
-                }).catch(() => []), [])
-            ]);
+//                withTimeout(Promise.all([
+//                    searchTpb(qEn, type),
+//                    ptDiferente ? searchTpb(qPt, type) : Promise.resolve([])
+//                ]).then(([en, pt]) => {
+//                    const seen = new Set<string>();
+//                    return [...en, ...pt]
+//                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
+//                        .map(r => this.mapTpbResult(r, type))
+//                        .filter((r): r is TorrentResult => r !== null);
+//                }).catch(() => []), [])
+//            ]);
 
             const allResults = [...wpResults, ...starckResults, ...hdrResults, ...rargbResults, ...tpbResults];
 
