@@ -6,8 +6,6 @@ import { WordPressScraper } from './wordpressScraper.js';
 import { BludvScraper } from './bludvScraper.js';
 import { searchStarck } from './starckScraper.js';
 import { searchHdr } from './hdrScraper.js';
-//import { searchRargb } from './rargbScraper.js';
-//import { searchTpb } from './tpbScraper.js';
 import { EpisodeMatcher } from '../../titulos/episodeMatcher.js';
 
 const logger = new Logger('TorrentScraperService');
@@ -103,32 +101,8 @@ export class TorrentScraperService {
                         .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
                         .map(r => this.mapHdrResult(r, type))
                         .filter((r): r is TorrentResult => r !== null);
-                }).catch(() => []), []),
-
-//                // RARGB (fonte extra)
-//                withTimeout(Promise.all([
-//                    searchRargb(qEn, type),
-//                    ptDiferente ? searchRargb(qPt, type) : Promise.resolve([])
-//                ]).then(([en, pt]) => {
-//                    const seen = new Set<string>();
-//                    return [...en, ...pt]
-//                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
-//                        .map(r => this.mapRargbResult(r, type))
-//                        .filter((r): r is TorrentResult => r !== null);
-//                }).catch(() => []), []),
-
-                // The Pirate Bay (fonte extra)
-//                withTimeout(Promise.all([
-//                    searchTpb(qEn, type),
-//                    ptDiferente ? searchTpb(qPt, type) : Promise.resolve([])
-//                ]).then(([en, pt]) => {
-//                    const seen = new Set<string>();
-//                    return [...en, ...pt]
-//                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
-//                        .map(r => this.mapTpbResult(r, type))
-//                        .filter((r): r is TorrentResult => r !== null);
-//                }).catch(() => []), [])
-//            ]);
+                }).catch(() => []), [])
+            ]);
 
             const allResults = [...wpResults, ...starckResults, ...hdrResults];
 
@@ -254,56 +228,8 @@ export class TorrentScraperService {
             season: season ?? undefined,
             lastUpdated: new Date(),
             confidence: 0.70
-        }
-//    }
-//
-//    private mapRargbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
-//        if (!r.magnet) return null;
-//        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
-//        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
-//        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
-//        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
-//        return {
-//            title: magnetName || r.title,
-//            magnet: r.magnet,
-//            seeders: r.seeders || 0,
-//            leechers: r.leechers || 0,
-//            size: r.size || 'N/A',
-//            quality: quality || 'HD',
-//            provider: 'RARGB',
-//            language: 'desconhecido',
-//            type,
-//            relevanceScore: 0,
-//            sizeInBytes: this.calculateSizeInBytes(r.size),
-//            season: season ?? undefined,
-//            lastUpdated: new Date(),
-//            confidence: 0.60
-//        }
-//    }
-//
-//    private mapTpbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
-//        if (!r.magnet) return null;
-//        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
-//        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
-//        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
-//        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
-//        return {
-//            title: magnetName || r.title,
-//            magnet: r.magnet,
-//            seeders: r.seeders || 0,
-//            leechers: r.leechers || 0,
-//            size: r.size || 'N/A',
-//            quality: quality || 'HD',
-//            provider: 'The Pirate Bay',
-//            language: 'desconhecido',
-//            type,
-//            relevanceScore: 0,
-//            sizeInBytes: this.calculateSizeInBytes(r.size),
-//            season: season ?? undefined,
-//            lastUpdated: new Date(),
-//            confidence: 0.55
-//        };
-//    }
+        };
+    }
 
     // ═══════════════════════════════════════════════════════════
     //  HELPERS
