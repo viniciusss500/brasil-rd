@@ -130,7 +130,6 @@ export const configureTemplate = (manifest: any) => {
                            id="${manifest.config[0].key}" 
                            name="${manifest.config[0].key}" 
                            class="full-width" 
-                           required 
                            placeholder="Cole sua chave de API do Torbox"
                            autocomplete="off" />
                     
@@ -185,11 +184,24 @@ export const configureTemplate = (manifest: any) => {
 
             let debounceTimer = null;
 
+            function toggleP2p() {
+                if (p2pCheckbox.checked) {
+                    apiKeyInput.disabled = true;
+                    apiKeyInput.style.opacity = '0.5';
+                } else {
+                    apiKeyInput.disabled = false;
+                    apiKeyInput.style.opacity = '1';
+                }
+                scheduleUpdate();
+            }
+
             async function updateLink() {
                 const apiKey = apiKeyInput.value.trim();
+                const isP2p = p2pCheckbox.checked;
                 const baseUrl = window.location.protocol + '//' + window.location.host;
 
-                if (!apiKey) {
+                // Bloqueia apenas se NÃO for P2P e NÃO houver chave API
+                if (!isP2p && !apiKey) {
                     installLink.href = '#';
                     directUrl.value = '';
                     directUrlSection.style.display = 'none';
@@ -200,7 +212,7 @@ export const configureTemplate = (manifest: any) => {
                     const resp = await fetch('/api/encrypt-config', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ apiKey: apiKey, p2p: p2pCheckbox.checked })
+                        body: JSON.stringify({ apiKey: apiKey, p2p: isP2p })
                     });
                     const data = await resp.json();
                     if (!data.success) throw new Error(data.error || 'Falha ao gerar link');
@@ -211,9 +223,17 @@ export const configureTemplate = (manifest: any) => {
                     directUrlSection.style.display = 'block';
                 } catch (err) {
                     console.error('[Brasil RD] Erro ao gerar URL encriptada', err);
-                    // Fallback: URL não encriptada (compatibilidade)
-                    installLink.href = 'stremio://' + window.location.hostname + ':' + window.location.port + '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
-                    directUrl.value = baseUrl + '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
+                    
+                    // Fallback para URL não encriptada
+                    let fallbackPath = '';
+                    if (isP2p) {
+                        fallbackPath = '/p2p=true/manifest.json';
+                    } else {
+                        fallbackPath = '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
+                    }
+                    
+                    installLink.href = 'stremio://' + window.location.hostname + ':' + window.location.port + fallbackPath;
+                    directUrl.value = baseUrl + fallbackPath;
                     directUrlSection.style.display = 'block';
                 }
             }
@@ -225,16 +245,19 @@ export const configureTemplate = (manifest: any) => {
             
             apiKeyInput.oninput = scheduleUpdate;
             apiKeyInput.onpaste = () => setTimeout(scheduleUpdate, 100);
-            p2pCheckbox.onchange = scheduleUpdate;
+            p2pCheckbox.onchange = toggleP2p;
             mainForm.onsubmit = (e) => e.preventDefault();
             
             installLink.onclick = () => {
-                if (!mainForm.reportValidity()) {
+                if (!p2pCheckbox.checked && !apiKeyInput.value.trim()) {
                     alert('Por favor, insira sua API Key do Torbox.');
                     return false;
                 }
                 return true;
             };
+
+            // Inicializa estado visual correto
+            toggleP2p();
         </script>
     </body>
     </html>`;
