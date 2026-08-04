@@ -21,6 +21,7 @@ import { createRateLimiter, torrentioRateLimiter } from './middlewares/rateLimit
 import { metricsService } from './catalogo/MetricsService.js';
 import { ultraDebugMiddleware, manifestDebugMiddleware, configureDebugMiddleware } from './middlewares/ultraDebug.js';
 import { RescrapeService } from './services/RescrapeService.js';
+import { encryptConfig, decryptConfig } from './lib/urlCrypto.js';
 
 const logger = new Logger('Main');
 const cacheService = new CacheService();
@@ -42,12 +43,22 @@ app.use(clientInfoMiddleware());
 app.use(metricsService.httpMetricsMiddleware());
 app.use(createRateLimiter());
 
-// Interceptor Torrentio
+// Interceptor Torrentio / rotas encriptadas
 app.use((req: any, res: any, next: any) => {
-    if (req.path.includes('/realdebrid=')) {
+    if (req.path.includes('/realdebrid=') || req.path.startsWith('/e/')) {
         req._torrentioHandled = true;
     }
     next();
+});
+
+// Gera o token encriptado usado na URL de manifest (chama isso o "configure" antes de instalar)
+app.post('/api/encrypt-config', (req: any, res: any) => {
+    const { apiKey, p2p } = req.body || {};
+    if (!apiKey || typeof apiKey !== 'string') {
+        return res.status(400).json({ success: false, error: 'apiKey é obrigatória' });
+    }
+    const token = encryptConfig({ apiKey, p2p: !!p2p });
+    res.json({ success: true, token });
 });
 
 app.get('/metrics', metricsService.metricsRoute());
@@ -72,7 +83,6 @@ async function initializeDatabase() {
         }
     }
 }
-
 // Cache middleware
 const cacheMaxAge = 600;
 app.use((req: any, res: any, next: any) => {
@@ -139,6 +149,61 @@ app.get('/realdebrid=:apiKey/manifest.json', torrentioRateLimiter, manifestDebug
     res.json(manifest);
 });
 
+// ROTA ENCRIPTADA: /e/:token/manifest.json (URL não expõe a API key em texto plano)
+app.get('/e/:token/manifest.json', torrentioRateLimiter, manifestDebugMiddleware(), (req: any, res: any) => {
+    const cfg = decryptConfig(req.params.token);
+    if (!cfg) {
+        return res.status(400).json({ err: 'Token inválido ou expirado' });
+    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, X-Request-ID');
+    res.json(manifest);
+});
+
+// ROTA ENCRIPTADA: /e/:token/stream/:type/:id.json
+app.get('/e/:token/stream/:type/:id.json', torrentioRateLimiter, async (req: any, res: any) => {
+    const { type, id } = req.params;
+    const decodedId = decodeURIComponent(id);
+    const cfg = decryptConfig(req.params.token);
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Content-Length');
+
+    if (!cfg || !cfg.apiKey || cfg.apiKey.length < 10) {
+        return res.json({ streams: [] });
+    }
+
+    try {
+        const { StreamHandler } = await import('./stream/StreamHandler.js');
+        const streamHandler = StreamHandler.getInstance();
+
+        const protocol = req.get('x-forwarded-proto') || 'https';
+        const host = req.get('host');
+        if (host) {
+            streamHandler.setStaticResponseBaseUrl(`${protocol}://${host}`);
+        }
+
+        const streamRequest = {
+            type: type as 'movie' | 'series',
+            id: decodedId,
+            apiKey: cfg.apiKey,
+            config: {
+                quality: 'Todas as Qualidades',
+                language: 'pt-BR',
+                streamType: 'direct',
+                maxResults: '25',
+                p2p: !!cfg.p2p
+            }
+        };
+
+        const result = await streamHandler.handleStreamRequest(streamRequest);
+        return res.json(result);
+    } catch (error) {
+        return res.json({ streams: [] });
+    }
+});
+
 // ROTA TORRENTIO 2: /torbox=APIKEY/stream/:type/:id.json
 app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (req: any, res: any) => {
     const ultraLogger = new Logger('STREAM-TORBOX');
@@ -192,7 +257,8 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
                 quality: 'Todas as Qualidades',
                 language: 'pt-BR',
                 streamType: 'direct',
-                maxResults: '25'
+                maxResults: '25',
+                p2p: req.query.p2p === '1' || req.query.p2p === 'true'
             }
         };
 
@@ -263,56 +329,63 @@ app.use((req: any, res: any, next: any) => {
     next();
 });
 
+// Detecta ambiente serverless (Vercel)
+const isServerless = !!process.env.VERCEL;
+let appReadyPromise: Promise<void> | null = null;
+
+/**
+ * Inicializa banco + rotas do SDK Stremio (idempotente).
+ * Usado tanto pelo startServer() (Railway/local) quanto pelo handler serverless da Vercel.
+ */
+async function initApp(): Promise<void> {
+    await initializeDatabase();
+
+    setupBasicRoutes(app, manifest);
+    setupResolveRoutes(app);
+    setupStaticRoutes(app);
+
+    const builder = createStremioBuilder(manifest);
+    const stremioRouter = getStremioRouter(builder);
+
+    // INTERCEPTOR para /manifest.json do SDK
+    app.use((req: any, res: any, next: any) => {
+        if (req.path === '/manifest.json' || req.path === '/manifest') {
+            const manifestLogger = new Logger('MANIFEST-SDK');
+            manifestLogger.info(' STREMIO PEDIU MANIFEST (via SDK router)', {
+                requestId: req._ultraDebugId,
+                method: req.method,
+                host: req.get('host'),
+            });
+        }
+        next();
+    });
+
+    app.use(stremioRouter);
+
+    // Job de re-scraping periódico não roda em serverless (sem estado persistente entre invocações)
+    if (!isServerless) {
+        RescrapeService.getInstance().start();
+    }
+}
+
+/** Garante que a app está inicializada e a retorna. Usado pelo entrypoint serverless (api/index.js). */
+export async function getApp() {
+    if (!appReadyPromise) {
+        appReadyPromise = initApp();
+    }
+    await appReadyPromise;
+    return app;
+}
+
 async function startServer() {
     try {
         const startupLogger = new Logger('Startup');
         startupLogger.info(`BRASIL RD Addon starting on port ${process.env.PORT || 7000}`);
 
-        await initializeDatabase();
-
-        setupBasicRoutes(app, manifest);
-        setupResolveRoutes(app);
-        setupStaticRoutes(app);
-
-        const builder = createStremioBuilder(manifest);
-        const stremioRouter = getStremioRouter(builder);
-
-        // INTERCEPTOR para /manifest.json do SDK
-        app.use((req: any, res: any, next: any) => {
-            if (req.path === '/manifest.json' || req.path === '/manifest') {
-                const manifestLogger = new Logger('MANIFEST-SDK');
-                manifestLogger.info('═══════════════════════════════════════', {});
-                manifestLogger.info(' STREMIO PEDIU MANIFEST (via SDK router)', {
-                    requestId: req._ultraDebugId,
-                    method: req.method,
-                    host: req.get('host'),
-                    origin: req.get('origin'),
-                    userAgent: req.get('user-agent')?.substring(0, 100),
-                    stremioAddonCollection: req.get('stremio-addon-collection'),
-                    protocol: req.protocol,
-                    fullUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-                });
-                manifestLogger.info(' Respondendo com manifest:', {
-                    id: manifest.id,
-                    version: manifest.version,
-                    name: manifest.name,
-                    configurationRequired: manifest.behaviorHints?.configurationRequired,
-                    configurable: manifest.behaviorHints?.configurable,
-                    resources: manifest.resources,
-                    types: manifest.types,
-                });
-                manifestLogger.info('═══════════════════════════════════════', {});
-            }
-            next();
-        });
-
-        app.use(stremioRouter);
+        await getApp();
 
         const port = process.env.PORT ? parseInt(process.env.PORT) : 7000;
         createServer(app, port);
-
-        // Inicia o serviço de re-scraping periódico (CAMRip → releases melhores)
-        RescrapeService.getInstance().start();
     } catch (error) {
         logger.error('Falha na inicializacao do servidor', {
             error: error instanceof Error ? error.message : 'Erro desconhecido'
@@ -321,4 +394,10 @@ async function startServer() {
     }
 }
 
-startServer();
+// Na Vercel, quem inicializa a app é o handler serverless (api/index.js) via getApp().
+// Fora da Vercel (Railway/local), sobe o servidor HTTP normalmente.
+if (!isServerless) {
+    startServer();
+}
+
+export { app };
