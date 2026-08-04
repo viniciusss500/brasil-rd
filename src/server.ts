@@ -87,6 +87,7 @@ async function initializeDatabase() {
         }
     }
 }
+
 // Cache middleware
 const cacheMaxAge = 600;
 app.use((req: any, res: any, next: any) => {
@@ -270,12 +271,6 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
         };
 
         const result = await streamHandler.handleStreamRequest(streamRequest);
-
-        return res.json(result);
-    } catch (error) {
-        return res.json({ streams: [] });
-    }
-});
 
         ultraLogger.info(' STREAM RESULT retornado', {
             requestId,
