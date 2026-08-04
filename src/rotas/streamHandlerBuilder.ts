@@ -77,6 +77,9 @@ export const createStremioBuilder = (manifest: any) => {
             return { streams: [] };
         }
 
+        const p2pRaw = args.config?.p2p;
+        const p2pMode = p2pRaw === true || p2pRaw === 'checked' || p2pRaw === 'on' || p2pRaw === '1';
+
         const streamRequest: StreamRequest = {
             type: args.type as 'movie' | 'series',
             id: args.id,
@@ -86,7 +89,8 @@ export const createStremioBuilder = (manifest: any) => {
                 quality: args.config?.quality || 'Todas as Qualidades',
                 language: args.config?.language || 'pt-BR',
                 streamType: args.config?.streamType || 'direct',
-                maxResults: args.config?.maxResults || '25'
+                maxResults: args.config?.maxResults || '25',
+                p2p: p2pMode
             }
         };
 
