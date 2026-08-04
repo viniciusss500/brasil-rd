@@ -36,6 +36,7 @@ export interface StreamRequest {
     minSeeders?: number;
     requireExactMatch?: boolean;
     maxConcurrentTorrents?: number;
+    p2p?: boolean; // Modo P2P puro: entrega magnet+trackers em vez de resolver via debrid
   };
 }
 
