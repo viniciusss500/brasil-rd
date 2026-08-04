@@ -6,9 +6,23 @@ import { WordPressScraper } from './wordpressScraper.js';
 import { BludvScraper } from './bludvScraper.js';
 import { searchStarck } from './starckScraper.js';
 import { searchHdr } from './hdrScraper.js';
+import { searchRargb } from './rargbScraper.js';
+import { searchTpb } from './tpbScraper.js';
 import { EpisodeMatcher } from '../../titulos/episodeMatcher.js';
 
 const logger = new Logger('TorrentScraperService');
+
+// Timeout máximo por fonte — evita que um scraper lento derrube a busca inteira.
+// Cada fonte roda em paralelo com as demais, então o tempo total fica limitado
+// ao mais lento entre os grupos (não à soma de todos).
+const SOURCE_TIMEOUT_MS = 9000;
+
+function withTimeout<T>(promise: Promise<T>, fallback: T, ms: number = SOURCE_TIMEOUT_MS): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))
+    ]);
+}
 
 export class TorrentScraperService {
     private readonly qualityDetector: QualityDetector;
@@ -16,7 +30,7 @@ export class TorrentScraperService {
     private readonly wpScraper: WordPressScraper;
     private readonly bludvScraper: BludvScraper;
     private readonly episodeMatcher = EpisodeMatcher.getInstance();
-    private readonly version = '6.2.0'; // WP API scraper integrado
+    private readonly version = '6.3.0'; // + RARGB/TPB, timeout por fonte
 
     constructor(tmdbScraper?: ImdbScraperService) {
         this.qualityDetector = QualityDetector.getInstance();
@@ -51,9 +65,9 @@ export class TorrentScraperService {
             const qPt = tmdbData?.portugueseTitleRaw || tmdbData?.portugueseTitle || query;
             const ptDiferente = qPt !== qEn;
 
-            const [wpResults, starckResults, hdrResults] = await Promise.all([
+            const [wpResults, starckResults, hdrResults, rargbResults, tpbResults] = await Promise.all([
                 // WordPress + Bludv
-                Promise.all([
+                withTimeout(Promise.all([
                     this.bludvScraper.search(qEn, type).catch(() => []),
                     this.bludvScraper.search(qPt, type).catch(() => []),
                     this.wpScraper.search(qEn, type).catch(() => []),
@@ -65,10 +79,10 @@ export class TorrentScraperService {
                         seen.add(t.magnet);
                         return true;
                     });
-                }).catch(() => []),
+                }).catch(() => []), []),
 
                 // Starck
-                Promise.all([
+                withTimeout(Promise.all([
                     searchStarck(qEn, type),
                     ptDiferente ? searchStarck(qPt, type) : Promise.resolve([])
                 ]).then(([en, pt]) => {
@@ -77,10 +91,10 @@ export class TorrentScraperService {
                         .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
                         .map(r => this.mapStarckResult(r, type))
                         .filter((r): r is TorrentResult => r !== null);
-                }).catch(() => []),
+                }).catch(() => []), []),
 
                 // HDR
-                Promise.all([
+                withTimeout(Promise.all([
                     searchHdr(qEn, type),
                     ptDiferente ? searchHdr(qPt, type) : Promise.resolve([])
                 ]).then(([en, pt]) => {
@@ -89,10 +103,34 @@ export class TorrentScraperService {
                         .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
                         .map(r => this.mapHdrResult(r, type))
                         .filter((r): r is TorrentResult => r !== null);
-                }).catch(() => [])
+                }).catch(() => []), []),
+
+                // RARGB (fonte extra)
+                withTimeout(Promise.all([
+                    searchRargb(qEn, type),
+                    ptDiferente ? searchRargb(qPt, type) : Promise.resolve([])
+                ]).then(([en, pt]) => {
+                    const seen = new Set<string>();
+                    return [...en, ...pt]
+                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
+                        .map(r => this.mapRargbResult(r, type))
+                        .filter((r): r is TorrentResult => r !== null);
+                }).catch(() => []), []),
+
+                // The Pirate Bay (fonte extra)
+                withTimeout(Promise.all([
+                    searchTpb(qEn, type),
+                    ptDiferente ? searchTpb(qPt, type) : Promise.resolve([])
+                ]).then(([en, pt]) => {
+                    const seen = new Set<string>();
+                    return [...en, ...pt]
+                        .filter(t => { if (seen.has(t.infoHash)) return false; seen.add(t.infoHash); return true; })
+                        .map(r => this.mapTpbResult(r, type))
+                        .filter((r): r is TorrentResult => r !== null);
+                }).catch(() => []), [])
             ]);
 
-            const allResults = [...wpResults, ...starckResults, ...hdrResults];
+            const allResults = [...wpResults, ...starckResults, ...hdrResults, ...rargbResults, ...tpbResults];
 
             const duration = Date.now() - startTime;
             if (duration > 5000) {
@@ -219,6 +257,54 @@ export class TorrentScraperService {
         };
     }
 
+    private mapRargbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
+        if (!r.magnet) return null;
+        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
+        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
+        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
+        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
+        return {
+            title: magnetName || r.title,
+            magnet: r.magnet,
+            seeders: r.seeders || 0,
+            leechers: r.leechers || 0,
+            size: r.size || 'N/A',
+            quality: quality || 'HD',
+            provider: 'RARGB',
+            language: 'desconhecido',
+            type,
+            relevanceScore: 0,
+            sizeInBytes: this.calculateSizeInBytes(r.size),
+            season: season ?? undefined,
+            lastUpdated: new Date(),
+            confidence: 0.60
+        };
+    }
+
+    private mapTpbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
+        if (!r.magnet) return null;
+        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
+        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
+        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
+        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
+        return {
+            title: magnetName || r.title,
+            magnet: r.magnet,
+            seeders: r.seeders || 0,
+            leechers: r.leechers || 0,
+            size: r.size || 'N/A',
+            quality: quality || 'HD',
+            provider: 'The Pirate Bay',
+            language: 'desconhecido',
+            type,
+            relevanceScore: 0,
+            sizeInBytes: this.calculateSizeInBytes(r.size),
+            season: season ?? undefined,
+            lastUpdated: new Date(),
+            confidence: 0.55
+        };
+    }
+
     // ═══════════════════════════════════════════════════════════
     //  HELPERS
     // ═══════════════════════════════════════════════════════════
@@ -237,7 +323,7 @@ export class TorrentScraperService {
     getStats() {
         return {
             versao: this.version,
-            provedoresAtivos: 3 // Bludv, WP Comando, Starck, HDR
+            provedoresAtivos: 5 // Bludv, WP Comando, Starck, HDR, RARGB, TPB
         };
     }
 }
