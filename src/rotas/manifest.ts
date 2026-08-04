@@ -43,7 +43,7 @@ export const manifest = {
             key: 'apiKey',
             type: 'text',
             title: 'Chave de API do Torbox',
-            required: true,           // Requerido para funcionalidade completa
+            required: false,           // Requerido para funcionalidade completa
             placeholder: 'Cole sua chave de API do Torbox aqui'
         },
         {
