@@ -6,8 +6,8 @@ import { WordPressScraper } from './wordpressScraper.js';
 import { BludvScraper } from './bludvScraper.js';
 import { searchStarck } from './starckScraper.js';
 import { searchHdr } from './hdrScraper.js';
-import { searchRargb } from './rargbScraper.js';
-import { searchTpb } from './tpbScraper.js';
+//import { searchRargb } from './rargbScraper.js';
+//import { searchTpb } from './tpbScraper.js';
 import { EpisodeMatcher } from '../../titulos/episodeMatcher.js';
 
 const logger = new Logger('TorrentScraperService');
@@ -254,56 +254,56 @@ export class TorrentScraperService {
             season: season ?? undefined,
             lastUpdated: new Date(),
             confidence: 0.70
-        };
-    }
-
-    private mapRargbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
-        if (!r.magnet) return null;
-        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
-        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
-        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
-        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
-        return {
-            title: magnetName || r.title,
-            magnet: r.magnet,
-            seeders: r.seeders || 0,
-            leechers: r.leechers || 0,
-            size: r.size || 'N/A',
-            quality: quality || 'HD',
-            provider: 'RARGB',
-            language: 'desconhecido',
-            type,
-            relevanceScore: 0,
-            sizeInBytes: this.calculateSizeInBytes(r.size),
-            season: season ?? undefined,
-            lastUpdated: new Date(),
-            confidence: 0.60
-        };
-    }
-
-    private mapTpbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
-        if (!r.magnet) return null;
-        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
-        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
-        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
-        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
-        return {
-            title: magnetName || r.title,
-            magnet: r.magnet,
-            seeders: r.seeders || 0,
-            leechers: r.leechers || 0,
-            size: r.size || 'N/A',
-            quality: quality || 'HD',
-            provider: 'The Pirate Bay',
-            language: 'desconhecido',
-            type,
-            relevanceScore: 0,
-            sizeInBytes: this.calculateSizeInBytes(r.size),
-            season: season ?? undefined,
-            lastUpdated: new Date(),
-            confidence: 0.55
-        };
-    }
+        }
+//    }
+//
+//    private mapRargbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
+//        if (!r.magnet) return null;
+//        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
+//        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
+//        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
+//        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
+//        return {
+//            title: magnetName || r.title,
+//            magnet: r.magnet,
+//            seeders: r.seeders || 0,
+//            leechers: r.leechers || 0,
+//            size: r.size || 'N/A',
+//            quality: quality || 'HD',
+//            provider: 'RARGB',
+//            language: 'desconhecido',
+//            type,
+//            relevanceScore: 0,
+//            sizeInBytes: this.calculateSizeInBytes(r.size),
+//            season: season ?? undefined,
+//            lastUpdated: new Date(),
+//            confidence: 0.60
+//        }
+//    }
+//
+//    private mapTpbResult(r: { title: string; magnet: string; infoHash: string; seeders: number; leechers: number; size: string }, type: 'movie' | 'series'): TorrentResult | null {
+//        if (!r.magnet) return null;
+//        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
+//        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
+//        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
+//        const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
+//        return {
+//            title: magnetName || r.title,
+//            magnet: r.magnet,
+//            seeders: r.seeders || 0,
+//            leechers: r.leechers || 0,
+//            size: r.size || 'N/A',
+//            quality: quality || 'HD',
+//            provider: 'The Pirate Bay',
+//            language: 'desconhecido',
+//            type,
+//            relevanceScore: 0,
+//            sizeInBytes: this.calculateSizeInBytes(r.size),
+//            season: season ?? undefined,
+//            lastUpdated: new Date(),
+//            confidence: 0.55
+//        };
+//    }
 
     // ═══════════════════════════════════════════════════════════
     //  HELPERS
