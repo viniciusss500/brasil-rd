@@ -146,6 +146,13 @@ export const configureTemplate = (manifest: any) => {
                         Não me responsabilizo pela segurança de sua chave API em forks ou versões não oficiais.
                     </div>
                 </div>
+
+                <div class="form-element" style="display:flex; align-items:center; gap:1vh;">
+                    <input type="checkbox" id="p2pMode" name="p2pMode" style="width:auto; margin:0;" />
+                    <label for="p2pMode" style="cursor:pointer;">
+                        Modo P2P puro (magnet direto, sem debrid — mais trackers)
+                    </label>
+                </div>
             </form>
             
             <div class="separator"></div>
@@ -167,31 +174,58 @@ export const configureTemplate = (manifest: any) => {
         </div>
         
         <script>
-            console.log('[Brasil RD] Configuração v2.2.0 - Sistema Torrentio-style');
+            console.log('[Brasil RD] Configuração v3.0.0 - URL de manifest encriptada + P2P opcional');
             
             const apiKeyInput = document.getElementById('${manifest.config[0].key}');
+            const p2pCheckbox = document.getElementById('p2pMode');
             const installLink = document.getElementById('installLink');
             const directUrl = document.getElementById('directUrl');
             const directUrlSection = document.getElementById('directUrlSection');
             const mainForm = document.getElementById('mainForm');
-            
-            function updateLink() {
+
+            let debounceTimer = null;
+
+            async function updateLink() {
                 const apiKey = apiKeyInput.value.trim();
                 const baseUrl = window.location.protocol + '//' + window.location.host;
-                
-                if (apiKey) {
-                    installLink.href = 'stremio://' + window.location.hostname + ':' + window.location.port + '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
-                    directUrl.value = baseUrl + '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
-                    directUrlSection.style.display = 'block';
-                } else {
+
+                if (!apiKey) {
                     installLink.href = '#';
                     directUrl.value = '';
                     directUrlSection.style.display = 'none';
+                    return;
+                }
+
+                try {
+                    const resp = await fetch('/api/encrypt-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ apiKey: apiKey, p2p: p2pCheckbox.checked })
+                    });
+                    const data = await resp.json();
+                    if (!data.success) throw new Error(data.error || 'Falha ao gerar link');
+
+                    const manifestPath = '/e/' + data.token + '/manifest.json';
+                    installLink.href = 'stremio://' + window.location.hostname + ':' + window.location.port + manifestPath;
+                    directUrl.value = baseUrl + manifestPath;
+                    directUrlSection.style.display = 'block';
+                } catch (err) {
+                    console.error('[Brasil RD] Erro ao gerar URL encriptada', err);
+                    // Fallback: URL não encriptada (compatibilidade)
+                    installLink.href = 'stremio://' + window.location.hostname + ':' + window.location.port + '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
+                    directUrl.value = baseUrl + '/torbox=' + encodeURIComponent(apiKey) + '/manifest.json';
+                    directUrlSection.style.display = 'block';
                 }
             }
+
+            function scheduleUpdate() {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(updateLink, 250);
+            }
             
-            apiKeyInput.oninput = updateLink;
-            apiKeyInput.onpaste = () => setTimeout(updateLink, 100);
+            apiKeyInput.oninput = scheduleUpdate;
+            apiKeyInput.onpaste = () => setTimeout(scheduleUpdate, 100);
+            p2pCheckbox.onchange = scheduleUpdate;
             mainForm.onsubmit = (e) => e.preventDefault();
             
             installLink.onclick = () => {
@@ -201,11 +235,9 @@ export const configureTemplate = (manifest: any) => {
                 }
                 return true;
             };
-            
-            updateLink();
         </script>
     </body>
     </html>`;
 };
 
-logger.info('ConfigureTemplate v2.3.0 carregado - Sistema Torrentio-style (torbox=API_KEY)');
+logger.info('ConfigureTemplate v3.0.0 carregado - manifest.json encriptado + modo P2P opcional');
