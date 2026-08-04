@@ -1,18 +1,30 @@
+// dist/config/index.js
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.config = void 0;
-exports.config = {
-    torbox: {
-        apiKey: process.env.TORBOX_API_KEY || '',
-        baseUrl: 'https://api.torbox.app/v1/api',
-        timeout: 10000
-    },
-    stremio: {
-        cacheMaxAge: 24 * 60 * 60,
-        streamTimeout: 30000
-    },
-    curatedMagnets: {
-        updateInterval: 6 * 60 * 60 * 1000,
-        maxRetries: 3
-    }
+
+exports.manifest = {
+    id: "org.brasilrd.addon",
+    version: "1.0.0",
+    name: "Brasil RD",
+    description: "Addon focado em conteúdo dublado/legendado PT-BR.",
+    resources: ["stream"],
+    types: ["movie", "series"],
+    idPrefixes: ["tt"],
+    catalogs: [],
+    config: [
+        // 1. Habilitar modo p2p puro opcional na UI
+        {
+            key: "p2p_only",
+            title: "Habilitar Modo P2P Puro (Desativar Debrid)",
+            type: "checkbox",
+            default: false,
+            required: false
+        },
+        {
+            key: "debrid_token",
+            title: "Token Real-Debrid",
+            type: "text",
+            required: false
+        }
+    ]
 };
