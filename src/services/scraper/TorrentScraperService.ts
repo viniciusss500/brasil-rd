@@ -10,9 +10,6 @@ import { EpisodeMatcher } from '../../titulos/episodeMatcher.js';
 
 const logger = new Logger('TorrentScraperService');
 
-// Timeout máximo por fonte — evita que um scraper lento derrube a busca inteira.
-// Cada fonte roda em paralelo com as demais, então o tempo total fica limitado
-// ao mais lento entre os grupos (não à soma de todos).
 const SOURCE_TIMEOUT_MS = 9000;
 
 function withTimeout<T>(promise: Promise<T>, fallback: T, ms: number = SOURCE_TIMEOUT_MS): Promise<T> {
@@ -28,7 +25,7 @@ export class TorrentScraperService {
     private readonly wpScraper: WordPressScraper;
     private readonly bludvScraper: BludvScraper;
     private readonly episodeMatcher = EpisodeMatcher.getInstance();
-    private readonly version = '6.3.1'; // removido RARGB/TPB, timeout por fonte
+    private readonly version = '6.4.0'; // Melhoria na extração de metadados/tamanho
 
     constructor(tmdbScraper?: ImdbScraperService) {
         this.qualityDetector = QualityDetector.getInstance();
@@ -143,8 +140,6 @@ export class TorrentScraperService {
         const queries: string[] = [];
         if (tmdbData?.allTitles?.length > 0) {
             const yearToUse = targetYear || tmdbData.year;
-            // PT primeiro (último do array), depois EN — prioriza busca em português
-            // Filtra títulos não-latinos (coreano, japonês etc) — inúteis em scrapers BR
             const titlesReverse = [...tmdbData.allTitles]
               .filter((t: string) => /^[a-z0-9\s\-\.]+$/i.test(t))
               .reverse();
@@ -168,33 +163,160 @@ export class TorrentScraperService {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  MAPEAMENTOS (simplificados — qualidade/idioma delegados ao pipeline)
+    //  MAPEAMENTOS E EXTRAÇÃO DE METADADOS
     // ═══════════════════════════════════════════════════════════
 
     private mapHdrResult(r: { title: string; magnet: string; infoHash: string; seeders: number; size: string; language: string }, type: 'movie' | 'series'): TorrentResult | null {
         if (!r.magnet) return null;
-        // Usa o nome real do magnet (dn=) como título — tem season, idioma e qualidade
-        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
-        const magnetName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.title;
-        const quality = this.qualityDetector.extractQualityFromFilename(magnetName);
+        
+        const magnetName = this.extractDisplayNameFromMagnet(r.magnet, r.title);
+        const quality = this.qualityDetector.extractQualityFromFilename(magnetName) || this.detectQualityFromText(magnetName);
         const season = this.episodeMatcher.extractSeasonFromTitle(magnetName);
-        const language = r.language ? this.mapHdrLanguage(r.language) : 'desconhecido';
+        const language = r.language ? this.mapHdrLanguage(r.language) : this.detectLanguageFromText(magnetName);
+        const { formattedSize, sizeInBytes } = this.parseSize(r.size, magnetName);
+
         return {
             title: magnetName,
             magnet: r.magnet,
-            seeders: r.seeders,
+            seeders: r.seeders || 0,
             leechers: 0,
-            size: r.size || 'N/A',
-            quality: quality || 'HD',
+            size: formattedSize,
+            quality,
             provider: 'HDR Torrent',
             language,
             type,
             relevanceScore: 0,
-            sizeInBytes: this.calculateSizeInBytes(r.size),
+            sizeInBytes,
             season: season ?? undefined,
             lastUpdated: new Date(),
             confidence: 0.70
         };
+    }
+
+    private mapStarckResult(r: { magnet: string; infoHash: string }, type: 'movie' | 'series'): TorrentResult | null {
+        if (!r.magnet) return null;
+
+        const displayName = this.extractDisplayNameFromMagnet(r.magnet);
+        const quality = this.qualityDetector.extractQualityFromFilename(displayName) || this.detectQualityFromText(displayName);
+        const season = this.episodeMatcher.extractSeasonFromTitle(displayName);
+        const language = this.detectLanguageFromText(displayName);
+        const { formattedSize, sizeInBytes } = this.parseSize('N/A', displayName);
+
+        return {
+            title: displayName,
+            magnet: r.magnet,
+            seeders: 0,
+            leechers: 0,
+            size: formattedSize,
+            quality,
+            provider: 'Starck',
+            language,
+            type,
+            relevanceScore: 0,
+            sizeInBytes,
+            season: season ?? undefined,
+            lastUpdated: new Date(),
+            confidence: 0.70
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MÉTODOS AUXILIARES DE PARSING
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Extrai o nome de exibição (`dn=`) do link magnet com decodificação segura
+     */
+    private extractDisplayNameFromMagnet(magnet: string, fallbackTitle?: string): string {
+        if (!magnet) return fallbackTitle || '';
+        const dnMatch = magnet.match(/dn=([^&]+)/i);
+        if (dnMatch) {
+            try {
+                return decodeURIComponent(dnMatch[1].replace(/\+/g, ' '));
+            } catch {
+                return dnMatch[1].replace(/\+/g, ' ');
+            }
+        }
+        return fallbackTitle || magnet;
+    }
+
+    /**
+     * Extrai e calcula o tamanho em Bytes de forma avançada.
+     * Tenta primeiro a string direta do scraper e, se falhar/ausente, procura no título/magnet.
+     */
+    private parseSize(sizeStr?: string, fallbackText?: string): { formattedSize: string; sizeInBytes: number } {
+        const DEFAULT_BYTES = 1.5 * 1024 ** 3; // 1.5 GB default
+        let textToSearch = sizeStr && sizeStr !== 'N/A' && sizeStr !== 'Tamanho não especificado' 
+            ? sizeStr 
+            : fallbackText || '';
+
+        if (!textToSearch) {
+            return { formattedSize: 'N/A', sizeInBytes: DEFAULT_BYTES };
+        }
+
+        // Regex para capturar números com pontuação BR/US e unidades (TB, GB, MB, KB, TiB, etc)
+        const sizeRegex = /(\d+(?:[\.,]\d+)?)\s*(TB|T|GB|G|MB|M|KB|K|TiB|GiB|MiB)\b/i;
+        const match = textToSearch.match(sizeRegex);
+
+        if (!match) {
+            return { 
+                formattedSize: sizeStr && sizeStr !== 'N/A' ? sizeStr : 'N/A', 
+                sizeInBytes: DEFAULT_BYTES 
+            };
+        }
+
+        let rawValue = match[1];
+        const unit = match[2].toUpperCase();
+
+        // Tratamento de pontuação BR/US (ex: 1.250,50 MB ou 1,5 GB ou 1.5 GB)
+        if (rawValue.includes('.') && rawValue.includes(',')) {
+            rawValue = rawValue.replace(/\./g, '').replace(',', '.');
+        } else {
+            rawValue = rawValue.replace(',', '.');
+        }
+
+        const numValue = parseFloat(rawValue);
+        if (isNaN(numValue)) {
+            return { formattedSize: 'N/A', sizeInBytes: DEFAULT_BYTES };
+        }
+
+        let multiplier = 1024 ** 3; // Padrão GB
+        if (unit.startsWith('T')) multiplier = 1024 ** 4;
+        else if (unit.startsWith('G')) multiplier = 1024 ** 3;
+        else if (unit.startsWith('M')) multiplier = 1024 ** 2;
+        else if (unit.startsWith('K')) multiplier = 1024;
+
+        const sizeInBytes = Math.round(numValue * multiplier);
+        const formattedUnit = unit.replace('I', ''); // Normaliza GiB -> GB
+        const formattedSize = `${numValue} ${formattedUnit}`;
+
+        return { formattedSize, sizeInBytes };
+    }
+
+    /**
+     * Tenta extrair a resolução/qualidade diretamente do nome do arquivo
+     */
+    private detectQualityFromText(text: string): string {
+        const lower = text.toLowerCase();
+        if (/2160p|4k|uhd/i.test(lower)) return '4K';
+        if (/1080p|fhd/i.test(lower)) return '1080p';
+        if (/720p|hd/i.test(lower)) return '720p';
+        if (/480p|sd/i.test(lower)) return '480p';
+        if (/bluray|bdrip/i.test(lower)) return 'Bluray';
+        if (/web-dl|webrip/i.test(lower)) return 'WEB-DL';
+        return 'HD';
+    }
+
+    /**
+     * Identifica o idioma a partir de padrões comuns em releases
+     */
+    private detectLanguageFromText(text: string): string {
+        const lower = text.toLowerCase();
+        if (/dual[\s\.-]?áudio|dual|multi/i.test(lower)) return 'Dual Áudio';
+        if (/dublado|pt[\s\.-]?br|dub/i.test(lower)) return 'Dublado';
+        if (/legendado|subbed|leg/i.test(lower)) return 'Legendado';
+        if (/nacional/i.test(lower)) return 'Nacional';
+        return 'desconhecido';
     }
 
     private mapHdrLanguage(label: string): string {
@@ -203,47 +325,8 @@ export class TorrentScraperService {
             case 'Dublado': return 'Dublado';
             case 'Legendado': return 'Legendado';
             case 'Nacional': return 'Nacional';
-            default: return 'desconhecido';
+            default: return this.detectLanguageFromText(label);
         }
-    }
-
-    private mapStarckResult(r: { magnet: string; infoHash: string }, type: 'movie' | 'series'): TorrentResult | null {
-        if (!r.magnet) return null;
-        const dnMatch = r.magnet.match(/dn=([^&]+)/i);
-        const displayName = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : r.magnet;
-        const quality = this.qualityDetector.extractQualityFromFilename(displayName);
-        const season = this.episodeMatcher.extractSeasonFromTitle(displayName);
-        return {
-            title: r.magnet,
-            magnet: r.magnet,
-            seeders: 0,
-            leechers: 0,
-            size: 'N/A',
-            quality: quality || 'HD',
-            provider: 'Starck',
-            language: 'desconhecido',
-            type,
-            relevanceScore: 0,
-            sizeInBytes: 0,
-            season: season ?? undefined,
-            lastUpdated: new Date(),
-            confidence: 0.70
-        };
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    //  HELPERS
-    // ═══════════════════════════════════════════════════════════
-
-    private calculateSizeInBytes(sizeStr: string): number {
-        if (!sizeStr || sizeStr === 'Tamanho não especificado') return 1.5 * 1024 ** 3;
-        const match = sizeStr.match(/(\d+\.?\d*)\s*(GB|MB|G|M)/i);
-        if (!match) return 1.5 * 1024 ** 3;
-        const value = parseFloat(match[1]);
-        const unit = match[2].toUpperCase();
-        if (unit === 'GB' || unit === 'G') return value * 1024 ** 3;
-        if (unit === 'MB' || unit === 'M') return value * 1024 ** 2;
-        return 1.5 * 1024 ** 3;
     }
 
     getStats() {
