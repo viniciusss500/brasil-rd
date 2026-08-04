@@ -30,7 +30,7 @@ export class TorrentScraperService {
     private readonly wpScraper: WordPressScraper;
     private readonly bludvScraper: BludvScraper;
     private readonly episodeMatcher = EpisodeMatcher.getInstance();
-    private readonly version = '6.3.0'; // + RARGB/TPB, timeout por fonte
+    private readonly version = '6.3.1'; // removido RARGB/TPB, timeout por fonte
 
     constructor(tmdbScraper?: ImdbScraperService) {
         this.qualityDetector = QualityDetector.getInstance();
@@ -65,7 +65,7 @@ export class TorrentScraperService {
             const qPt = tmdbData?.portugueseTitleRaw || tmdbData?.portugueseTitle || query;
             const ptDiferente = qPt !== qEn;
 
-            const [wpResults, starckResults, hdrResults, rargbResults, tpbResults] = await Promise.all([
+            const [wpResults, starckResults, hdrResults] = await Promise.all([
                 // WordPress + Bludv
                 withTimeout(Promise.all([
                     this.bludvScraper.search(qEn, type).catch(() => []),
@@ -130,7 +130,7 @@ export class TorrentScraperService {
 //                }).catch(() => []), [])
 //            ]);
 
-            const allResults = [...wpResults, ...starckResults, ...hdrResults, ...rargbResults, ...tpbResults];
+            const allResults = [...wpResults, ...starckResults, ...hdrResults];
 
             const duration = Date.now() - startTime;
             if (duration > 5000) {
@@ -323,7 +323,7 @@ export class TorrentScraperService {
     getStats() {
         return {
             versao: this.version,
-            provedoresAtivos: 5 // Bludv, WP Comando, Starck, HDR, RARGB, TPB
+            provedoresAtivos: 4 // Bludv, WP Comando, Starck, HDR
         };
     }
 }
