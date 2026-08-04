@@ -54,10 +54,14 @@ app.use((req: any, res: any, next: any) => {
 // Gera o token encriptado usado na URL de manifest (chama isso o "configure" antes de instalar)
 app.post('/api/encrypt-config', (req: any, res: any) => {
     const { apiKey, p2p } = req.body || {};
-    if (!apiKey || typeof apiKey !== 'string') {
-        return res.status(400).json({ success: false, error: 'apiKey é obrigatória' });
+    const isP2p = !!p2p;
+    
+    // apiKey só é obrigatória se o modo P2P NÃO estiver ativado
+    if (!isP2p && (!apiKey || typeof apiKey !== 'string')) {
+        return res.status(400).json({ success: false, error: 'apiKey é obrigatória quando o modo P2P não está ativo' });
     }
-    const token = encryptConfig({ apiKey, p2p: !!p2p });
+    
+    const token = encryptConfig({ apiKey: apiKey || '', p2p: isP2p });
     res.json({ success: true, token });
 });
 
@@ -170,7 +174,10 @@ app.get('/e/:token/stream/:type/:id.json', torrentioRateLimiter, async (req: any
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Content-Length');
 
-    if (!cfg || !cfg.apiKey || cfg.apiKey.length < 10) {
+    const isP2p = !!cfg?.p2p;
+
+    // Permite prosseguir se for P2P, mesmo sem apiKey
+    if (!cfg || (!isP2p && (!cfg.apiKey || cfg.apiKey.length < 10))) {
         return res.json({ streams: [] });
     }
 
@@ -187,13 +194,13 @@ app.get('/e/:token/stream/:type/:id.json', torrentioRateLimiter, async (req: any
         const streamRequest = {
             type: type as 'movie' | 'series',
             id: decodedId,
-            apiKey: cfg.apiKey,
+            apiKey: cfg.apiKey || '',
             config: {
                 quality: 'Todas as Qualidades',
                 language: 'pt-BR',
                 streamType: 'direct',
                 maxResults: '25',
-                p2p: !!cfg.p2p
+                p2p: isP2p
             }
         };
 
@@ -211,6 +218,8 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
     const decodedId = decodeURIComponent(id);
     const requestId = req._ultraDebugId || 'no-id';
 
+    const isP2p = req.query.p2p === '1' || req.query.p2p === 'true' || apiKey === 'p2p' || apiKey === 'none';
+
     ultraLogger.info('═══════════════════════════════════════', {});
     ultraLogger.info(' STREAM SOLICITADO (Torbox route)', {
         requestId,
@@ -218,11 +227,9 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
         id: decodedId,
         apiKeyPresent: !!apiKey,
         apiKeyLength: apiKey?.length || 0,
-        apiKeyPreview: apiKey ? (apiKey.substring(0, 4) + '...' + apiKey.substring(apiKey.length - 4)) : 'NONE',
+        isP2p,
         host: req.get('host'),
         origin: req.get('origin'),
-        userAgent: req.get('user-agent')?.substring(0, 100),
-        clientInfo: (req as any)._clientInfo,
     });
 
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -230,7 +237,8 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
     res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Content-Length');
 
     try {
-        if (!apiKey || apiKey.length < 10) {
+        // Exige apiKey apenas se NÃO for modo P2P
+        if (!isP2p && (!apiKey || apiKey.length < 10)) {
             ultraLogger.warn(' API Key inválida ou ausente para stream', {
                 requestId,
                 apiKeyLength: apiKey?.length || 0,
@@ -242,7 +250,6 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
         const { StreamHandler } = await import('./stream/StreamHandler.js');
         const streamHandler = StreamHandler.getInstance();
 
-        // Define URL base a partir do host da requisicao (para URLs absolutas nos videos)
         const protocol = req.get('x-forwarded-proto') || 'https';
         const host = req.get('host');
         if (host) {
@@ -252,17 +259,23 @@ app.get('/torbox=:apiKey/stream/:type/:id.json', torrentioRateLimiter, async (re
         const streamRequest = {
             type: type as 'movie' | 'series',
             id: decodedId,
-            apiKey: apiKey,
+            apiKey: apiKey || '',
             config: {
                 quality: 'Todas as Qualidades',
                 language: 'pt-BR',
                 streamType: 'direct',
                 maxResults: '25',
-                p2p: req.query.p2p === '1' || req.query.p2p === 'true'
+                p2p: isP2p
             }
         };
 
         const result = await streamHandler.handleStreamRequest(streamRequest);
+
+        return res.json(result);
+    } catch (error) {
+        return res.json({ streams: [] });
+    }
+});
 
         ultraLogger.info(' STREAM RESULT retornado', {
             requestId,
