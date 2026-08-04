@@ -34,10 +34,10 @@ export const manifest = {
         configurable: true,           // Usuário pode configurar
         configurationRequired: false, // NÃO requer configuração para usar (FIX WEB)
         adult: false,                 // Conteúdo não adulto
-        p2p: false                    // Não usa P2P
+        p2p: true                     // Suporta modo P2P puro (opcional, via config)
     },
     
-    // Configuração opcional (API Key do Torbox)
+    // Configuração (API Key do Torbox + modo P2P opcional)
     config: [
         {
             key: 'apiKey',
@@ -45,6 +45,12 @@ export const manifest = {
             title: 'Chave de API do Torbox',
             required: true,           // Requerido para funcionalidade completa
             placeholder: 'Cole sua chave de API do Torbox aqui'
+        },
+        {
+            key: 'p2p',
+            type: 'checkbox',
+            title: 'Modo P2P puro (magnet direto, sem debrid)',
+            required: false
         }
     ]
 };
